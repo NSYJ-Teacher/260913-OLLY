@@ -114,7 +114,13 @@ class ClassroomStore {
       this._classroomId = session.classroomId;
 
       if (session.role === "student") {
-        await this._loadStudentData(session.studentNum);
+        try {
+          await this._loadStudentData(session.studentNum);
+        } catch (err) {
+          console.error("[OLLY] 학생 데이터 재적재 실패:", err && err.code, err && err.message);
+          sessionStorage.removeItem("current_user");
+          return null;
+        }
         return session;
       }
 
@@ -204,20 +210,43 @@ class ClassroomStore {
       loginAt: new Date().toISOString()
     };
     sessionStorage.setItem("current_user", JSON.stringify(session));
-    await this._loadStudentData(studentNum);
+
+    try {
+      await this._loadStudentData(studentNum);
+    } catch (err) {
+      console.error("[OLLY] 학생 데이터 로드 실패:", err && err.code, err && err.message, err);
+      sessionStorage.removeItem("current_user");
+      return {
+        success: false,
+        message: "학생 데이터를 불러오는 중 오류가 발생했습니다. (" + (err && err.code ? err.code : (err && err.message) || err) + ")"
+      };
+    }
+
     return { success: true, session };
   }
 
   async _loadStudentData(studentNum) {
     const numKey = String(studentNum);
     const classroomRef = this._classroomRef();
-    const [settingsDoc, reflSnap, assessSnap, ocDoc, opDoc] = await Promise.all([
-      classroomRef.collection("settings").doc("system").get(),
-      classroomRef.collection("students").doc(numKey).collection("reflections").orderBy("createdAt", "desc").get(),
-      classroomRef.collection("students").doc(numKey).collection("selfAssessments").orderBy("createdAt", "desc").get(),
-      classroomRef.collection("settings").doc("question_overrides_conflict").get(),
-      classroomRef.collection("settings").doc("question_overrides_personal").get()
-    ]);
+    const queries = [
+      { name: "settings/system", promise: classroomRef.collection("settings").doc("system").get() },
+      { name: "reflections", promise: classroomRef.collection("students").doc(numKey).collection("reflections").orderBy("createdAt", "desc").get() },
+      { name: "selfAssessments", promise: classroomRef.collection("students").doc(numKey).collection("selfAssessments").orderBy("createdAt", "desc").get() },
+      { name: "question_overrides_conflict", promise: classroomRef.collection("settings").doc("question_overrides_conflict").get() },
+      { name: "question_overrides_personal", promise: classroomRef.collection("settings").doc("question_overrides_personal").get() }
+    ];
+    const results = await Promise.allSettled(queries.map(q => q.promise));
+    results.forEach((r, idx) => {
+      if (r.status === "rejected") {
+        console.error(`[OLLY] 학생 데이터 - ${queries[idx].name} 읽기 실패:`, r.reason && r.reason.code, r.reason && r.reason.message);
+      }
+    });
+    const firstFailure = results.find(r => r.status === "rejected");
+    if (firstFailure) {
+      throw firstFailure.reason;
+    }
+
+    const [settingsDoc, reflSnap, assessSnap, ocDoc, opDoc] = results.map(r => r.value);
 
     this._cache.systemSettings = settingsDoc.exists ? settingsDoc.data() : { selfIntroOpen: true, totalStudents: 23 };
     this._cache.reflections[studentNum] = reflSnap.docs.map(d => d.data());

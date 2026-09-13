@@ -318,7 +318,13 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   async function handlePinSubmit() {
-    const result = await window.appStore.verifyStudentLogin(classroomId, selectedStudentNum, enteredPin);
+    let result;
+    try {
+      result = await window.appStore.verifyStudentLogin(classroomId, selectedStudentNum, enteredPin);
+    } catch (err) {
+      console.error("[OLLY] 로그인 처리 중 예외 발생:", err);
+      result = { success: false, message: "예상치 못한 오류가 발생했습니다: " + (err && err.message ? err.message : err) };
+    }
     if (result.success) {
       showToast(`${selectedStudentNum}번 학생으로 접속되었습니다.`, "success");
       enterPinStep.style.display = "none";
