@@ -10,9 +10,13 @@ service cloud.firestore {
 
     // 헬퍼 함수: 이 학급의 특정 출석번호 학생 본인 확인
     // 학생 로그인 가상 이메일: student{studentId}_{classroomId}@classroom.local
+    // 주의: Firebase Auth는 이메일을 저장/토큰 발급 시 항상 소문자로 정규화합니다.
+    // classroomId(Firebase UID)는 대소문자가 섞여 있으므로, 이메일 형태로 비교할 때는
+    // 반드시 .lower()로 맞춰야 합니다. (UID 자체를 직접 비교하는 isClassroomTeacher는
+    // 이메일이 아니라 UID 값 그대로 비교하므로 영향 없음)
     function isStudentOwner(classroomId, studentId) {
       return request.auth != null &&
-        request.auth.token.email == ('student' + string(studentId) + '_' + classroomId + '@classroom.local');
+        request.auth.token.email == ('student' + string(studentId) + '_' + classroomId.lower() + '@classroom.local');
     }
 
     match /classrooms/{classroomId} {
@@ -56,21 +60,17 @@ service cloud.firestore {
     // 위 nested match 규칙은 특정 부모 경로를 "직접" 조회할 때만 적용되고 collectionGroup() 쿼리에는
     // 적용되지 않으므로 최상위 와일드카드(path=**) 규칙이 별도로 필요합니다. 와일드카드 경로 세그먼트를
     // 직접 파싱하는 대신(안정성이 낮음), 각 문서에 저장된 classroomId 필드로 본인 학급 여부를 확인합니다.
-    // 주의: resource.data.classroomId == request.auth.uid는 "교사(=학급 UID)" 조건만 허용합니다.
-    // 학생 본인은 UID가 학급 ID와 다르므로, 학생 본인의 가상 이메일 조건도 함께 허용해야
-    // 학생이 자신의 성찰문/자기평가를 직접 경로로 조회할 때도 이 와일드카드 규칙과
-    // 겹쳐서 permission-denied가 나지 않습니다.
     match /{path=**}/reflections/{docId} {
       allow read: if request.auth != null && (
         resource.data.classroomId == request.auth.uid ||
-        request.auth.token.email == ('student' + string(resource.data.studentNum) + '_' + resource.data.classroomId + '@classroom.local')
+        request.auth.token.email == ('student' + string(resource.data.studentNum) + '_' + resource.data.classroomId.lower() + '@classroom.local')
       );
     }
 
     match /{path=**}/selfAssessments/{docId} {
       allow read: if request.auth != null && (
         resource.data.classroomId == request.auth.uid ||
-        request.auth.token.email == ('student' + string(resource.data.studentNum) + '_' + resource.data.classroomId + '@classroom.local')
+        request.auth.token.email == ('student' + string(resource.data.studentNum) + '_' + resource.data.classroomId.lower() + '@classroom.local')
       );
     }
   }
