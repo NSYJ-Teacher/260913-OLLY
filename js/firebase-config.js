@@ -230,8 +230,12 @@ class ClassroomStore {
     const classroomRef = this._classroomRef();
     const queries = [
       { name: "settings/system", promise: classroomRef.collection("settings").doc("system").get() },
-      { name: "reflections", promise: classroomRef.collection("students").doc(numKey).collection("reflections").orderBy("createdAt", "desc").get() },
-      { name: "selfAssessments", promise: classroomRef.collection("students").doc(numKey).collection("selfAssessments").orderBy("createdAt", "desc").get() },
+      // classroomId로 where() 필터를 걸어야, students/{id}/reflections 등에 함께 걸려있는
+      // collectionGroup 보안 규칙(위 firestore.rules의 {path=**} 규칙)과 겹쳐도 Firestore가
+      // 이 조회가 본인 학급으로만 범위가 좁혀졌음을 증명할 수 있어 permission-denied가 나지 않습니다.
+      // (createdAt 정렬은 복합 색인이 추가로 필요해지므로 클라이언트에서 정렬합니다)
+      { name: "reflections", promise: classroomRef.collection("students").doc(numKey).collection("reflections").where("classroomId", "==", this._classroomId).get() },
+      { name: "selfAssessments", promise: classroomRef.collection("students").doc(numKey).collection("selfAssessments").where("classroomId", "==", this._classroomId).get() },
       { name: "question_overrides_conflict", promise: classroomRef.collection("settings").doc("question_overrides_conflict").get() },
       { name: "question_overrides_personal", promise: classroomRef.collection("settings").doc("question_overrides_personal").get() }
     ];
@@ -249,8 +253,10 @@ class ClassroomStore {
     const [settingsDoc, reflSnap, assessSnap, ocDoc, opDoc] = results.map(r => r.value);
 
     this._cache.systemSettings = settingsDoc.exists ? settingsDoc.data() : { selfIntroOpen: true, totalStudents: 23 };
-    this._cache.reflections[studentNum] = reflSnap.docs.map(d => d.data());
-    this._cache.assessments[studentNum] = assessSnap.docs.map(d => d.data());
+    this._cache.reflections[studentNum] = reflSnap.docs.map(d => d.data())
+      .sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
+    this._cache.assessments[studentNum] = assessSnap.docs.map(d => d.data())
+      .sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
     this._cache.questionOverrides.conflict = ocDoc.exists ? ocDoc.data() : {};
     this._cache.questionOverrides.personal = opDoc.exists ? opDoc.data() : {};
   }
