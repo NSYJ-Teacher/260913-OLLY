@@ -24,8 +24,11 @@ document.addEventListener("DOMContentLoaded", () => {
     teacherHeaderInfo.style.display = view === "teacher" ? "flex" : "none";
   }
 
+  // 학급 전용 링크(?class=학급ID)로 접속한 경우, 해당 학급 ID를 기억해둡니다.
+  const classIdFromUrl = new URLSearchParams(window.location.search).get("class");
+
   // 다른 스크립트(student.js, teacher.js)에서 화면 전환을 호출할 수 있도록 전역 공개
-  window.OllyApp = { showView };
+  window.OllyApp = { showView, classroomIdFromUrl: classIdFromUrl };
 
   if (btnGoStudent) {
     btnGoStudent.addEventListener("click", () => showView("student"));
@@ -46,6 +49,9 @@ document.addEventListener("DOMContentLoaded", () => {
     showView("student");
   } else if (session && session.role === "teacher") {
     showView("teacher");
+  } else if (classIdFromUrl) {
+    // 학급 전용 링크로 처음 접속한 경우, 랜딩을 건너뛰고 바로 학생 접속 화면으로 진입
+    showView("student");
   } else {
     showView("landing");
   }

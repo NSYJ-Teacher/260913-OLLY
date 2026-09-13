@@ -3,35 +3,35 @@
 @import url('https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@400;600;700&display=swap');
 
 :root {
-  /* 배경 & 면 색상 (차분하고 성찰적인 아이보리/베이지 계열) */
-  --bg-main: #F8F6F0;
+  /* 배경 & 면 색상 (올리 로고 톤에 맞춘 밝고 부드러운 하늘색/아이보리 계열) */
+  --bg-main: #F3F8FC;
   --bg-card: #FFFFFF;
-  --bg-card-subtle: #F2EFE8;
-  --bg-hover: #ECE8DE;
-  
-  /* 텍스트 & 먹색 계열 */
-  --text-primary: #212529;
-  --text-secondary: #4A5560;
-  --text-muted: #768390;
-  --text-disabled: #A6B0BA;
+  --bg-card-subtle: #EAF3FA;
+  --bg-hover: #DDEBF6;
 
-  /* 포인트 컬러 (짙은 남색, 차분한 블루/올리브 계열) */
-  --color-primary: #1C2E44;
-  --color-primary-hover: #152335;
-  --color-primary-light: #EBF1F7;
-  --color-accent: #3F5E78;
-  --color-border: #DED8CE;
-  --color-border-light: #ECE8DF;
+  /* 텍스트 & 먹색 계열 */
+  --text-primary: #253746;
+  --text-secondary: #52697A;
+  --text-muted: #82949F;
+  --text-disabled: #ABB8C0;
+
+  /* 포인트 컬러 (올리 로고의 하늘색 + 초록색 톤) */
+  --color-primary: #4A90C4;
+  --color-primary-hover: #3B78A8;
+  --color-primary-light: #E8F3FB;
+  --color-accent: #5DAE64;
+  --color-border: #D6E6F0;
+  --color-border-light: #E8F1F7;
 
   /* 상태 컬러 */
-  --color-success: #2E6B4F;
-  --color-success-bg: #EAF4EE;
-  --color-warning: #995A1E;
-  --color-warning-bg: #FDF4E7;
-  --color-danger: #9B3030;
-  --color-danger-bg: #FAECEC;
-  --color-info: #2B5B84;
-  --color-info-bg: #EBF3FA;
+  --color-success: #4C9A56;
+  --color-success-bg: #EBF6EC;
+  --color-warning: #C98A2E;
+  --color-warning-bg: #FDF3E5;
+  --color-danger: #D2685E;
+  --color-danger-bg: #FCEDEB;
+  --color-info: #4A90C4;
+  --color-info-bg: #E8F3FB;
 
   /* 폰트 */
   --font-body: 'Pretendard', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -87,7 +87,7 @@ body {
 }
 
 .app-logo-img {
-  height: 38px;
+  height: 76px;
   width: auto;
   display: block;
 }
@@ -287,14 +287,13 @@ body {
 
 .student-btn {
   display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
   aspect-ratio: 1;
   background-color: var(--bg-card);
   border: 1.5px solid var(--color-border);
   border-radius: var(--radius-md);
-  font-size: 1.15rem;
+  font-size: 2rem;
   font-weight: 700;
   color: var(--color-primary);
   cursor: pointer;
@@ -312,13 +311,6 @@ body {
   border-color: var(--color-primary);
   color: #FFFFFF;
   box-shadow: 0 4px 10px rgba(28, 46, 68, 0.25);
-}
-
-.student-btn .sub-text {
-  font-size: 0.72rem;
-  font-weight: 500;
-  opacity: 0.8;
-  margin-top: 2px;
 }
 
 /* PIN 코드 입력기 */

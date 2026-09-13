@@ -56,90 +56,60 @@ const StrengthTemplates = {
   ]
 };
 
-// 기본 장점 보충 문장 (자기평가 키워드가 적을 때 활용)
-const FallbackStrengths = [
-  "매사 밝고 긍정적인 태도로 학교생활에 임하며, 교우들과 원만한 관계를 유지함.",
-  "수업 활동에 적극적으로 참여하며, 교사의 피드백을 수용하여 한 단계 더 발전하고자 하는 학습 열의를 지님.",
-  "학급의 크고 작은 규칙을 모범적으로 준수하며 바른 기본 생활 습관이 잘 형성되어 있음."
-];
-
 class RecordDraftGenerator {
   /**
    * 학생 데이터 종합 기반 행발 초안 생성
+   * - 장점 문장은 학생이 실제로 제출한 자기평가 장점 키워드에서만 생성합니다.
+   *   (자기평가가 없거나 부족하다고 해서 가상의 장점을 지어내지 않습니다.)
    * @param {Object} studentSummary - { reflections, assessments, studentNum }
-   * @returns {Object} { mode: '3:1' | '4:0', sentences: [...], fullText: '...' }
+   * @returns {Object} { mode: string, sentences: [...], fullText: '...' }
    */
   static generateDraft(studentSummary) {
     const reflections = studentSummary.reflections || [];
     const assessments = studentSummary.assessments || [];
     const latestAssessment = assessments.length > 0 ? assessments[0] : null;
+    const realStrengths = (latestAssessment && latestAssessment.strengths) ? latestAssessment.strengths : [];
+
+    // 실제 제출된 장점 데이터가 전혀 없으면, 근거 없는 초안을 만들지 않고 안내만 반환합니다.
+    if (realStrengths.length === 0) {
+      return {
+        mode: "insufficient",
+        summary: "자기평가에서 제출된 장점 데이터가 없어 근거 있는 초안을 생성할 수 없습니다. 학생에게 자기평가 제출을 안내한 뒤 다시 시도해 주세요.",
+        sentences: [],
+        fullText: ""
+      };
+    }
 
     const hasReflections = reflections.length > 0;
     const hasGrowthInAssessment = latestAssessment && latestAssessment.growthAreas && latestAssessment.growthAreas.length > 0;
 
     // 분기 판단: 성찰문이나 자기평가 보완점이 존재하는가?
     const needsGrowthSentence = hasReflections || hasGrowthInAssessment;
-    const mode = needsGrowthSentence ? "3:1" : "4:0";
+    const mode = `${realStrengths.length}:${needsGrowthSentence ? 1 : 0}`;
 
     const sentences = [];
 
-    // 1. 장점 문장 추출 (3문장 또는 4문장)
-    const targetStrengthCount = needsGrowthSentence ? 3 : 4;
-    const usedTags = new Set();
-
-    // 자기평가 장점에서 추출
-    if (latestAssessment && latestAssessment.strengths) {
-      for (const item of latestAssessment.strengths) {
-        if (sentences.length >= targetStrengthCount) break;
-        const tag = item.tag;
-        usedTags.add(tag);
-
-        let sentenceText = "";
-        if (StrengthTemplates[tag]) {
-          // 템플릿 중 하나 선택
-          const list = StrengthTemplates[tag];
-          sentenceText = list[Math.floor(Math.random() * list.length)];
-        } else {
-          sentenceText = `평소 ${tag}의 미덕을 바탕으로 주변을 따뜻하게 살피며 모범적인 생활 태도를 실천함.`;
-        }
-
-        sentences.push({
-          type: "strength",
-          tag: tag,
-          text: sentenceText,
-          sourceLabel: `자기평가 장점 [${tag}]`,
-          sourceDetail: item.reason || "학생 자기평가 기록"
-        });
-      }
-    }
-
-    // 장점 개수가 부족하면 일반 장점 템플릿에서 중복 없이 보충
-    const availableTags = Object.keys(StrengthTemplates).filter(t => !usedTags.has(t));
-    while (sentences.length < targetStrengthCount) {
-      if (availableTags.length > 0) {
-        const nextTag = availableTags.shift();
-        const list = StrengthTemplates[nextTag];
-        const pickedText = list[0];
-        sentences.push({
-          type: "strength",
-          tag: nextTag,
-          text: pickedText,
-          sourceLabel: `학급 생활 관찰 [${nextTag}]`,
-          sourceDetail: "기본 생활 습관 및 수업 참여도 관찰"
-        });
+    // 1. 장점 문장: 학생이 실제로 선택한 장점 키워드 전부를 그대로 사용합니다 (허구 보충 없음).
+    for (const item of realStrengths) {
+      const tag = item.tag;
+      let sentenceText;
+      if (StrengthTemplates[tag]) {
+        const list = StrengthTemplates[tag];
+        sentenceText = list[Math.floor(Math.random() * list.length)];
       } else {
-        const fallback = FallbackStrengths[sentences.length % FallbackStrengths.length];
-        sentences.push({
-          type: "strength",
-          tag: "기본태도",
-          text: fallback,
-          sourceLabel: "기본 생활 태도",
-          sourceDetail: "학급 공통 관찰"
-        });
+        sentenceText = `평소 ${tag}의 미덕을 바탕으로 주변을 따뜻하게 살피며 모범적인 생활 태도를 실천함.`;
       }
+
+      sentences.push({
+        type: "strength",
+        tag: tag,
+        text: sentenceText,
+        sourceLabel: `자기평가 장점 [${tag}]`,
+        sourceDetail: item.reason || "학생 자기평가 기록"
+      });
     }
 
-    // 2. 단점(보완점) 문장 생성 (3:1 모드일 때 1문장 추가)
+    // 2. 단점(보완점) 문장 생성 (성찰문 또는 자기평가 보완점이 있을 때 1문장 추가)
     if (needsGrowthSentence) {
       let growthSentence = null;
 
@@ -215,9 +185,9 @@ class RecordDraftGenerator {
 
     return {
       mode,
-      summary: needsGrowthSentence 
-        ? "성찰문/보완점 기록이 반영된 3:1(장점 3 + 완곡 보완점 1) 구성 초안입니다." 
-        : "사안 기록이 없는 모범 학생으로, 억지 단점을 배제한 4:0(장점 4) 구성 초안입니다.",
+      summary: needsGrowthSentence
+        ? `학생이 실제 제출한 장점 ${realStrengths.length}개와 성찰문/보완점 기록을 반영한 ${mode} 구성 초안입니다.`
+        : `사안 기록이 없는 학생으로, 학생이 실제 제출한 장점 ${realStrengths.length}개만으로 구성한 초안입니다 (억지 보완점 없음).`,
       sentences,
       fullText
     };

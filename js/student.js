@@ -8,6 +8,8 @@ document.addEventListener("DOMContentLoaded", () => {
   const selectNumberStep = document.getElementById("selectNumberStep");
   const enterPinStep = document.getElementById("enterPinStep");
   const studentGrid = document.getElementById("studentGrid");
+  const classNameBadge = document.getElementById("classNameBadge");
+  const classroomMissingNotice = document.getElementById("classroomMissingNotice");
   const studentDashboardSection = document.getElementById("studentDashboardSection");
   const reflectionFormSection = document.getElementById("reflectionFormSection");
   const selfAssessmentSection = document.getElementById("selfAssessmentSection");
@@ -59,6 +61,8 @@ document.addEventListener("DOMContentLoaded", () => {
   const historyContentArea = document.getElementById("historyContentArea");
 
   // 상태 변수
+  let classroomId = window.OllyApp ? window.OllyApp.classroomIdFromUrl : null;
+  let classroomName = "";
   let selectedStudentNum = null;
   let enteredPin = "";
   let activeReflectionType = "conflict"; // 'conflict' or 'personal'
@@ -175,12 +179,34 @@ document.addEventListener("DOMContentLoaded", () => {
   initApp();
 
   function initApp() {
-    renderStudentGrid();
     setupKeypadEvents();
     setupReflectionFlow();
     setupSelfAssessmentFlow();
     checkExistingSession();
-    renderSystemStatus();
+    setupClassroomEntry();
+  }
+
+  // 학급 전용 링크(?class=학급ID)로 접속했는지 확인하고, 학급명/학생 수를 반영해 접속 화면을 준비
+  async function setupClassroomEntry() {
+    if (!classroomId) {
+      classroomMissingNotice.style.display = "block";
+      studentGrid.style.display = "none";
+      classNameBadge.style.display = "none";
+      return;
+    }
+    const info = await window.appStore.getClassroomPublicInfo(classroomId);
+    if (!info) {
+      classroomMissingNotice.style.display = "block";
+      studentGrid.style.display = "none";
+      classNameBadge.style.display = "none";
+      return;
+    }
+    classroomName = info.className || "";
+    classNameBadge.textContent = classroomName;
+    classNameBadge.style.display = classroomName ? "inline-block" : "none";
+    classroomMissingNotice.style.display = "none";
+    studentGrid.style.display = "grid";
+    renderStudentGrid(info.totalStudents);
   }
 
   // 시스템 설정 반영 (자기평가 오픈 여부 등)
@@ -201,17 +227,15 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  // 1. 학생 출석번호 그리드 렌더링 (1~23번)
-  function renderStudentGrid() {
+  // 1. 학생 출석번호 그리드 렌더링
+  function renderStudentGrid(totalStudents) {
+    const total = totalStudents || 23;
     studentGrid.innerHTML = "";
-    for (let i = 1; i <= 23; i++) {
+    for (let i = 1; i <= total; i++) {
       const btn = document.createElement("button");
       btn.className = "student-btn";
       btn.type = "button";
-      btn.innerHTML = `
-        <span>${i}</span>
-        <span class="sub-text">번 학생</span>
-      `;
+      btn.textContent = String(i);
       btn.addEventListener("click", () => selectStudentNumber(i));
       studentGrid.appendChild(btn);
     }
@@ -294,7 +318,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   async function handlePinSubmit() {
-    const result = await window.appStore.verifyStudentLogin(selectedStudentNum, enteredPin);
+    const result = await window.appStore.verifyStudentLogin(classroomId, selectedStudentNum, enteredPin);
     if (result.success) {
       showToast(`${selectedStudentNum}번 학생으로 접속되었습니다.`, "success");
       enterPinStep.style.display = "none";
@@ -310,6 +334,7 @@ document.addEventListener("DOMContentLoaded", () => {
   function checkExistingSession() {
     window.appStore.restoreSession().then((session) => {
       if (session && session.role === "student") {
+        classroomId = session.classroomId || classroomId;
         authSection.style.display = "none";
         showDashboard(session);
       }
@@ -318,7 +343,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
   function showDashboard(session) {
     selectedStudentNum = session.studentNum;
-    currentStudentLabel.textContent = `6학년 1반 ${session.studentNum}번 학생`;
+    const settings = window.appStore.getSystemSettings();
+    classroomName = (settings && settings.className) || classroomName;
+    currentStudentLabel.textContent = classroomName
+      ? `${classroomName} ${session.studentNum}번 학생`
+      : `${session.studentNum}번 학생`;
     studentHeaderInfo.style.display = "flex";
     studentDashboardSection.style.display = "block";
     renderSystemStatus();

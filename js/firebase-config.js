@@ -1,11 +1,11 @@
 /**
- * Firebase 설정 및 실제 Firestore/Auth 연동 스토리지 어댑터
- * - Firebase Authentication(이메일/비밀번호)과 Cloud Firestore를 사용해
- *   어느 브라우저/기기에서 접속하든 동일한 데이터가 보이도록 합니다.
- * - 학생: 출석번호를 가상 이메일(student{번호}@classroom.local)로,
- *   4자리 접속 코드를 Firebase 비밀번호(olly-{코드} 형태)로 변환해 로그인합니다.
- * - 교사: @school.kr 이메일 + 비밀번호로 로그인하며, firestore.rules의 isTeacher()가
- *   이 이메일 도메인을 기준으로 교사 권한을 인정합니다.
+ * Firebase 설정 및 실제 Firestore/Auth 연동 스토리지 어댑터 (학급별 다중 사용 지원)
+ * - 교사 1명 = 학급 1개(classroomId = 교사 Firebase Auth UID)로 완전히 분리되어 저장됩니다.
+ * - 교사: 이메일/비밀번호로 로그인(최초 로그인 시 자동 가입) 후, 학급 이름/학생 수를 정해
+ *   자신의 학급을 생성합니다.
+ * - 학생: 담임교사가 공유한 "학급 전용 링크"(?class=학급ID)로 접속해 출석번호와
+ *   4자리 코드로 로그인합니다. 가상 이메일(student{번호}_{학급ID}@classroom.local)과
+ *   코드 기반 비밀번호로 내부적으로 처리되어, 화면에는 노출되지 않습니다.
  */
 
 window.FIREBASE_CONFIG = {
@@ -25,11 +25,8 @@ const db = firebaseApp.firestore();
 const secondaryApp = firebase.initializeApp(window.FIREBASE_CONFIG, "Secondary");
 const secondaryAuth = secondaryApp.auth();
 
-// firestore.rules의 isTeacher() 허용 목록과 동일하게 유지해야 합니다.
-const TEACHER_ALLOWLIST = ["csj5327@gmail.com"];
-
-function studentEmail(num) {
-  return `student${num}@classroom.local`;
+function studentEmail(num, classroomId) {
+  return `student${num}_${classroomId}@classroom.local`;
 }
 
 function studentPassword(pin) {
@@ -69,6 +66,7 @@ function translateAuthError(err) {
 // 스토리지 어댑터 구현
 class ClassroomStore {
   constructor() {
+    this._classroomId = null;
     this._cache = {
       systemSettings: null,
       studentCodes: {},
@@ -77,6 +75,26 @@ class ClassroomStore {
       assessments: {}
     };
     this._restorePromise = null;
+  }
+
+  _classroomRef() {
+    return db.collection("classrooms").doc(this._classroomId);
+  }
+
+  getClassroomId() {
+    return this._classroomId;
+  }
+
+  // 학생 접속 화면(로그인 전)에서 학급명/학생 수를 보여주기 위한 공개 조회
+  async getClassroomPublicInfo(classroomId) {
+    if (!classroomId) return null;
+    try {
+      const doc = await db.collection("classrooms").doc(classroomId).collection("settings").doc("system").get();
+      return doc.exists ? doc.data() : null;
+    } catch (err) {
+      console.error("[OLLY] 학급 공개 정보 조회 실패:", err && err.code, err && err.message);
+      return null;
+    }
   }
 
   // --- 세션 복원 (새로고침 등으로 재접속 시, Firebase 인증 상태를 바탕으로 데이터 재적재) ---
@@ -93,17 +111,29 @@ class ClassroomStore {
         return null;
       }
 
+      this._classroomId = session.classroomId;
+
       if (session.role === "student") {
         await this._loadStudentData(session.studentNum);
-      } else if (session.role === "teacher") {
-        await this._loadTeacherData();
+        return session;
       }
+
+      if (session.role === "teacher") {
+        let hasClassroom = false;
+        try {
+          hasClassroom = await this._checkAndLoadTeacherData();
+        } catch (err) {
+          console.error("[OLLY] 교사 데이터 재적재 실패:", err && err.code, err && err.message);
+        }
+        return { ...session, needsClassroomSetup: !hasClassroom };
+      }
+
       return session;
     })();
     return this._restorePromise;
   }
 
-  // --- 학생 인증 및 PIN 관리 ---
+  // --- 학생 인증 및 PIN 관리 (교사 세션에서만 사용) ---
   getAllStudentCodes() {
     return this._cache.studentCodes;
   }
@@ -112,7 +142,7 @@ class ClassroomStore {
     const oldPin = this._cache.studentCodes[studentNum];
     await this._provisionStudentAccount(studentNum, pin, oldPin);
     this._cache.studentCodes[studentNum] = String(pin);
-    await db.collection("students").doc(String(studentNum))
+    await this._classroomRef().collection("students").doc(String(studentNum))
       .set({ pin: String(pin), studentNum: parseInt(studentNum, 10) }, { merge: true });
     return true;
   }
@@ -124,7 +154,7 @@ class ClassroomStore {
       const newPin = String(Math.floor(1000 + Math.random() * 9000));
       const oldPin = this._cache.studentCodes[i];
       await this._provisionStudentAccount(i, newPin, oldPin);
-      await db.collection("students").doc(String(i)).set({ pin: newPin, studentNum: i }, { merge: true });
+      await this._classroomRef().collection("students").doc(String(i)).set({ pin: newPin, studentNum: i }, { merge: true });
       codes[i] = newPin;
     }
     this._cache.studentCodes = codes;
@@ -133,7 +163,7 @@ class ClassroomStore {
 
   // 보조 앱 인스턴스로 학생 Firebase Auth 계정을 생성하거나 비밀번호(=코드)를 갱신
   async _provisionStudentAccount(num, newPin, oldPin) {
-    const email = studentEmail(num);
+    const email = studentEmail(num, this._classroomId);
     const newPassword = studentPassword(newPin);
     try {
       if (oldPin) {
@@ -156,16 +186,21 @@ class ClassroomStore {
     }
   }
 
-  async verifyStudentLogin(studentNum, pin) {
+  async verifyStudentLogin(classroomId, studentNum, pin) {
+    if (!classroomId) {
+      return { success: false, message: "학급 접속 링크가 필요합니다. 담임 선생님께 받은 링크(또는 QR코드)로 다시 접속해 주세요." };
+    }
     try {
-      await auth.signInWithEmailAndPassword(studentEmail(studentNum), studentPassword(pin));
+      await auth.signInWithEmailAndPassword(studentEmail(studentNum, classroomId), studentPassword(pin));
     } catch (err) {
       return { success: false, message: "출석번호 또는 4자리 접속 코드가 일치하지 않습니다." };
     }
+    this._classroomId = classroomId;
     const session = {
       role: "student",
       studentNum: parseInt(studentNum, 10),
-      virtualEmail: studentEmail(studentNum),
+      classroomId,
+      virtualEmail: studentEmail(studentNum, classroomId),
       loginAt: new Date().toISOString()
     };
     sessionStorage.setItem("current_user", JSON.stringify(session));
@@ -175,12 +210,13 @@ class ClassroomStore {
 
   async _loadStudentData(studentNum) {
     const numKey = String(studentNum);
+    const classroomRef = this._classroomRef();
     const [settingsDoc, reflSnap, assessSnap, ocDoc, opDoc] = await Promise.all([
-      db.collection("settings").doc("system").get(),
-      db.collection("students").doc(numKey).collection("reflections").orderBy("createdAt", "desc").get(),
-      db.collection("students").doc(numKey).collection("selfAssessments").orderBy("createdAt", "desc").get(),
-      db.collection("settings").doc("question_overrides_conflict").get(),
-      db.collection("settings").doc("question_overrides_personal").get()
+      classroomRef.collection("settings").doc("system").get(),
+      classroomRef.collection("students").doc(numKey).collection("reflections").orderBy("createdAt", "desc").get(),
+      classroomRef.collection("students").doc(numKey).collection("selfAssessments").orderBy("createdAt", "desc").get(),
+      classroomRef.collection("settings").doc("question_overrides_conflict").get(),
+      classroomRef.collection("settings").doc("question_overrides_personal").get()
     ]);
 
     this._cache.systemSettings = settingsDoc.exists ? settingsDoc.data() : { selfIntroOpen: true, totalStudents: 23 };
@@ -190,16 +226,11 @@ class ClassroomStore {
     this._cache.questionOverrides.personal = opDoc.exists ? opDoc.data() : {};
   }
 
-  // --- 교사 로그인 (구글 계정) ---
-  // firestore.rules의 isTeacher()와 동일한 기준으로 교사 여부를 인정합니다.
+  // --- 교사 로그인 ---
   async verifyTeacherLogin(email, password) {
     email = String(email || "").trim();
     password = String(password || "").trim();
 
-    const isAllowedTeacherEmail = TEACHER_ALLOWLIST.includes(email) || email.endsWith("@school.kr");
-    if (!isAllowedTeacherEmail) {
-      return { success: false, message: "교사 계정으로 인정되지 않는 이메일입니다. @school.kr 형식의 이메일을 사용해 주세요. (예: teacher@school.kr)" };
-    }
     if (password.length < 6) {
       return { success: false, message: "비밀번호는 6자 이상이어야 합니다." };
     }
@@ -219,43 +250,51 @@ class ClassroomStore {
       return { success: false, message: translateAuthError(err) };
     }
 
-    const session = { role: "teacher", email, loginAt: new Date().toISOString() };
-    sessionStorage.setItem("current_user", JSON.stringify(session));
+    this._classroomId = auth.currentUser.uid;
 
+    let hasClassroom = false;
     try {
-      await this._loadTeacherData();
+      hasClassroom = await this._checkAndLoadTeacherData();
     } catch (err) {
       console.error("[OLLY] 교사 데이터 로드 실패:", err && err.code, err && err.message, err);
-      sessionStorage.removeItem("current_user");
       return {
         success: false,
         message: "교사 데이터를 불러오는 중 오류가 발생했습니다. (" + (err && err.code ? err.code : (err && err.message) || err) + ")"
       };
     }
 
-    return { success: true, session };
+    const session = {
+      role: "teacher",
+      email,
+      classroomId: this._classroomId,
+      loginAt: new Date().toISOString()
+    };
+    sessionStorage.setItem("current_user", JSON.stringify(session));
+
+    return { success: true, session, needsClassroomSetup: !hasClassroom };
   }
 
-  async _loadTeacherData() {
+  // 학급 존재 여부를 확인하고, 있으면 전체 데이터를 적재합니다. (반환값: 학급 존재 여부)
+  async _checkAndLoadTeacherData() {
     let settingsDoc;
     try {
-      settingsDoc = await db.collection("settings").doc("system").get();
+      settingsDoc = await this._classroomRef().collection("settings").doc("system").get();
     } catch (err) {
       console.error("[OLLY] settings/system 읽기 실패:", err && err.code, err && err.message);
       throw err;
     }
 
     if (!settingsDoc.exists) {
-      await this._seedInitialData();
-      return this._loadTeacherData();
+      return false;
     }
 
+    const classroomRef = this._classroomRef();
     const queries = [
-      { name: "students", promise: db.collection("students").get() },
+      { name: "students", promise: classroomRef.collection("students").get() },
       { name: "reflections(collectionGroup)", promise: db.collectionGroup("reflections").get() },
       { name: "selfAssessments(collectionGroup)", promise: db.collectionGroup("selfAssessments").get() },
-      { name: "question_overrides_conflict", promise: db.collection("settings").doc("question_overrides_conflict").get() },
-      { name: "question_overrides_personal", promise: db.collection("settings").doc("question_overrides_personal").get() }
+      { name: "question_overrides_conflict", promise: classroomRef.collection("settings").doc("question_overrides_conflict").get() },
+      { name: "question_overrides_personal", promise: classroomRef.collection("settings").doc("question_overrides_personal").get() }
     ];
     const results = await Promise.allSettled(queries.map(q => q.promise));
     results.forEach((r, idx) => {
@@ -277,6 +316,8 @@ class ClassroomStore {
       this._cache.studentCodes[doc.id] = doc.data().pin;
     });
 
+    // collectionGroup 쿼리는 이 프로젝트 내 모든 학급의 reflections/selfAssessments를 스캔 대상으로
+    // 삼을 수 있으므로(보안 규칙은 본인 학급 경로만 허용), 응답에는 본인 학급 문서만 포함됩니다.
     this._cache.reflections = {};
     reflSnap.forEach(doc => {
       const data = doc.data();
@@ -301,36 +342,67 @@ class ClassroomStore {
 
     this._cache.questionOverrides.conflict = ocDoc.exists ? ocDoc.data() : {};
     this._cache.questionOverrides.personal = opDoc.exists ? opDoc.data() : {};
+
+    return true;
   }
 
-  // 최초 배포 시 한 번만 실행되는 기본 학급 설정 + 학생 계정 시드
-  async _seedInitialData() {
-    console.log("[OLLY] 최초 실행: 기본 학급 설정과 학생 계정을 생성합니다...");
+  // 교사가 최초 로그인 후 자신의 학급을 생성 (학급 이름 + 학생 수 지정)
+  async createClassroom({ className, totalStudents }) {
+    const total = Math.max(1, Math.min(50, parseInt(totalStudents, 10) || 23));
     const defaultSettings = {
+      className: String(className || "").trim() || "우리 학급",
       selfIntroOpen: true,
-      academicYear: "2026",
-      grade: "6",
-      classNum: "1",
-      totalStudents: 23
+      totalStudents: total,
+      createdAt: new Date().toISOString()
     };
+
     try {
-      await db.collection("settings").doc("system").set(defaultSettings);
+      await this._classroomRef().collection("settings").doc("system").set(defaultSettings);
     } catch (err) {
-      console.error("[OLLY] settings/system 쓰기 실패:", err && err.code, err && err.message);
+      console.error("[OLLY] 학급 생성(settings) 실패:", err && err.code, err && err.message);
       throw err;
     }
 
-    for (let i = 1; i <= defaultSettings.totalStudents; i++) {
+    for (let i = 1; i <= total; i++) {
       const pin = String(1000 + i);
       await this._provisionStudentAccount(i, pin, null);
       try {
-        await db.collection("students").doc(String(i)).set({ pin, studentNum: i });
+        await this._classroomRef().collection("students").doc(String(i)).set({ pin, studentNum: i });
       } catch (err) {
         console.error(`[OLLY] students/${i} 쓰기 실패:`, err && err.code, err && err.message);
         throw err;
       }
     }
-    console.log("[OLLY] 초기 설정 완료.");
+
+    await this._checkAndLoadTeacherData();
+  }
+
+  // 학급 설정 변경 (학급 이름, 학생 수 등) — 학생 수를 늘리면 새 학생 계정이 자동 생성됩니다.
+  async updateClassroomSettings({ className, totalStudents }) {
+    const current = this._cache.systemSettings || {};
+    const prevTotal = current.totalStudents || 0;
+    const nextTotal = Math.max(1, Math.min(50, parseInt(totalStudents, 10) || prevTotal || 23));
+
+    const updated = {
+      ...current,
+      className: String(className || current.className || "").trim() || "우리 학급",
+      totalStudents: nextTotal
+    };
+
+    await this._classroomRef().collection("settings").doc("system").set(updated, { merge: true });
+    this._cache.systemSettings = updated;
+
+    // 학생 수가 늘어난 경우, 늘어난 번호만큼 기본 코드로 신규 계정 생성
+    if (nextTotal > prevTotal) {
+      for (let i = prevTotal + 1; i <= nextTotal; i++) {
+        const pin = String(1000 + i);
+        await this._provisionStudentAccount(i, pin, null);
+        await this._classroomRef().collection("students").doc(String(i)).set({ pin, studentNum: i });
+        this._cache.studentCodes[i] = pin;
+      }
+    }
+
+    return updated;
   }
 
   getCurrentSession() {
@@ -340,6 +412,7 @@ class ClassroomStore {
 
   logout() {
     sessionStorage.removeItem("current_user");
+    this._classroomId = null;
     this._cache = {
       systemSettings: null,
       studentCodes: {},
@@ -355,14 +428,15 @@ class ClassroomStore {
     console.error("[OLLY Firestore 동기화 오류]", err);
   }
 
-  // --- 시스템 전역 설정 (settings/system) ---
+  // --- 시스템 전역 설정 (classrooms/{id}/settings/system) ---
   getSystemSettings() {
     return this._cache.systemSettings;
   }
 
   saveSystemSettings(settings) {
     this._cache.systemSettings = settings;
-    db.collection("settings").doc("system").set(settings).catch(err => this._reportSyncError(err));
+    this._classroomRef().collection("settings").doc("system").set(settings, { merge: true })
+      .catch(err => this._reportSyncError(err));
   }
 
   // --- 성찰문 질문 문구 커스터마이징 ---
@@ -372,23 +446,23 @@ class ClassroomStore {
 
   saveReflectionQuestionOverrides(type, overrides) {
     this._cache.questionOverrides[type] = overrides;
-    db.collection("settings").doc("question_overrides_" + type).set(overrides)
+    this._classroomRef().collection("settings").doc("question_overrides_" + type).set(overrides)
       .catch(err => this._reportSyncError(err));
   }
 
   resetReflectionQuestionOverrides(type) {
     this._cache.questionOverrides[type] = {};
-    db.collection("settings").doc("question_overrides_" + type).delete()
+    this._classroomRef().collection("settings").doc("question_overrides_" + type).delete()
       .catch(err => this._reportSyncError(err));
   }
 
-  // --- 성찰문 (students/{studentNum}/reflections) ---
+  // --- 성찰문 (classrooms/{id}/students/{studentNum}/reflections) ---
   getReflections(studentNum) {
     return this._cache.reflections[studentNum] || [];
   }
 
   addReflection(studentNum, data) {
-    const docRef = db.collection("students").doc(String(studentNum)).collection("reflections").doc();
+    const docRef = this._classroomRef().collection("students").doc(String(studentNum)).collection("reflections").doc();
     const newDoc = {
       id: docRef.id,
       studentNum: parseInt(studentNum, 10),
@@ -409,7 +483,7 @@ class ClassroomStore {
     if (!target) return false;
     target.teacherComment = comment;
     target.commentedAt = new Date().toISOString();
-    db.collection("students").doc(String(studentNum)).collection("reflections").doc(docId)
+    this._classroomRef().collection("students").doc(String(studentNum)).collection("reflections").doc(docId)
       .update({ teacherComment: comment, commentedAt: target.commentedAt })
       .catch(err => this._reportSyncError(err));
     return true;
@@ -432,7 +506,7 @@ class ClassroomStore {
     }
     target.editedAt = patch.editedAt;
 
-    db.collection("students").doc(String(studentNum)).collection("reflections").doc(docId)
+    this._classroomRef().collection("students").doc(String(studentNum)).collection("reflections").doc(docId)
       .update(patch)
       .catch(err => this._reportSyncError(err));
     return true;
@@ -445,19 +519,19 @@ class ClassroomStore {
     const changed = filtered.length !== list.length;
     this._cache.reflections[studentNum] = filtered;
     if (changed) {
-      db.collection("students").doc(String(studentNum)).collection("reflections").doc(docId)
+      this._classroomRef().collection("students").doc(String(studentNum)).collection("reflections").doc(docId)
         .delete().catch(err => this._reportSyncError(err));
     }
     return changed;
   }
 
-  // --- 자기평가 (students/{studentNum}/selfAssessments) ---
+  // --- 자기평가 (classrooms/{id}/students/{studentNum}/selfAssessments) ---
   getSelfAssessments(studentNum) {
     return this._cache.assessments[studentNum] || [];
   }
 
   saveSelfAssessment(studentNum, data) {
-    const docRef = db.collection("students").doc(String(studentNum)).collection("selfAssessments").doc();
+    const docRef = this._classroomRef().collection("students").doc(String(studentNum)).collection("selfAssessments").doc();
     const newDoc = {
       id: docRef.id,
       studentNum: parseInt(studentNum, 10),
@@ -488,7 +562,7 @@ class ClassroomStore {
     }
     target.editedAt = patch.editedAt;
 
-    db.collection("students").doc(String(studentNum)).collection("selfAssessments").doc(docId)
+    this._classroomRef().collection("students").doc(String(studentNum)).collection("selfAssessments").doc(docId)
       .update(patch)
       .catch(err => this._reportSyncError(err));
     return true;
@@ -501,7 +575,7 @@ class ClassroomStore {
     const changed = filtered.length !== list.length;
     this._cache.assessments[studentNum] = filtered;
     if (changed) {
-      db.collection("students").doc(String(studentNum)).collection("selfAssessments").doc(docId)
+      this._classroomRef().collection("students").doc(String(studentNum)).collection("selfAssessments").doc(docId)
         .delete().catch(err => this._reportSyncError(err));
     }
     return changed;

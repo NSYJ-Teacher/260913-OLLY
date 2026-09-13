@@ -14,6 +14,14 @@
       "test.js",
       "PRD.md",
       "firestore.rules"
+    ],
+    "headers": [
+      {
+        "source": "**/*.@(html|js|css)",
+        "headers": [
+          { "key": "Cache-Control", "value": "no-cache, max-age=0, must-revalidate" }
+        ]
+      }
     ]
   }
 }

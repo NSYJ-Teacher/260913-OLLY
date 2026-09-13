@@ -11,6 +11,24 @@ document.addEventListener("DOMContentLoaded", () => {
   const teacherPassword = document.getElementById("teacherPassword");
   const teacherEmailLabel = document.getElementById("teacherEmailLabel");
   const btnTeacherLogout = document.getElementById("btnTeacherLogout");
+  const sidebarClassTitle = document.getElementById("sidebarClassTitle");
+
+  // 학급 만들기 화면
+  const classroomSetupOverlay = document.getElementById("classroomSetupOverlay");
+  const formClassroomSetup = document.getElementById("formClassroomSetup");
+  const classroomNameInput = document.getElementById("classroomNameInput");
+  const classroomSizeInput = document.getElementById("classroomSizeInput");
+  const btnCreateClassroom = document.getElementById("btnCreateClassroom");
+
+  // 학급 링크·설정 모달
+  const btnOpenClassroomModal = document.getElementById("btnOpenClassroomModal");
+  const classroomModal = document.getElementById("classroomModal");
+  const btnCloseClassroomModal = document.getElementById("btnCloseClassroomModal");
+  const classroomLinkInput = document.getElementById("classroomLinkInput");
+  const btnCopyClassroomLink = document.getElementById("btnCopyClassroomLink");
+  const formClassroomEdit = document.getElementById("formClassroomEdit");
+  const classroomNameEditInput = document.getElementById("classroomNameEditInput");
+  const classroomSizeEditInput = document.getElementById("classroomSizeEditInput");
 
   // 헤더 컨트롤
   const btnToggleSelfIntro = document.getElementById("btnToggleSelfIntro");
@@ -85,6 +103,8 @@ document.addEventListener("DOMContentLoaded", () => {
   function initTeacherApp() {
     checkTeacherSession();
     setupLoginHandler();
+    setupClassroomSetupForm();
+    setupClassroomModal();
     setupSelfIntroToggle();
     setupPinModal();
     setupQuestionTextModal();
@@ -96,10 +116,15 @@ document.addEventListener("DOMContentLoaded", () => {
   function checkTeacherSession() {
     window.appStore.restoreSession().then((session) => {
       if (session && session.role === "teacher") {
-        showTeacherDashboard(session);
+        if (session.needsClassroomSetup) {
+          showClassroomSetup(session);
+        } else {
+          showTeacherDashboard(session);
+        }
       } else {
         teacherLoginOverlay.style.display = "flex";
         teacherApp.style.display = "none";
+        classroomSetupOverlay.style.display = "none";
       }
     });
   }
@@ -121,8 +146,12 @@ document.addEventListener("DOMContentLoaded", () => {
       if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = "관리자 대시보드 접속"; }
 
       if (res.success) {
-        showTeacherDashboard(res.session);
-        showToast("선생님 환영합니다. 대시보드에 접속했습니다.", "success");
+        if (res.needsClassroomSetup) {
+          showClassroomSetup(res.session);
+        } else {
+          showTeacherDashboard(res.session);
+          showToast("선생님 환영합니다. 대시보드에 접속했습니다.", "success");
+        }
       } else {
         showToast(res.message, "danger");
       }
@@ -131,16 +160,113 @@ document.addEventListener("DOMContentLoaded", () => {
     btnTeacherLogout.addEventListener("click", () => {
       window.appStore.logout();
       teacherApp.style.display = "none";
+      classroomSetupOverlay.style.display = "none";
       teacherLoginOverlay.style.display = "flex";
       showToast("로그아웃되었습니다.", "info");
       if (window.OllyApp) window.OllyApp.showView("landing");
     });
   }
 
+  function showClassroomSetup(session) {
+    teacherEmailLabel.textContent = session.email;
+    teacherLoginOverlay.style.display = "none";
+    teacherApp.style.display = "none";
+    classroomSetupOverlay.style.display = "flex";
+  }
+
+  function setupClassroomSetupForm() {
+    formClassroomSetup.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const className = classroomNameInput.value.trim();
+      const totalStudents = parseInt(classroomSizeInput.value, 10);
+
+      btnCreateClassroom.disabled = true;
+      btnCreateClassroom.textContent = "학급을 만드는 중입니다... (학생 수에 따라 다소 시간이 걸릴 수 있어요)";
+
+      try {
+        await window.appStore.createClassroom({ className, totalStudents });
+        showTeacherDashboard(window.appStore.getCurrentSession());
+        showToast(`'${className}' 학급이 생성되었습니다!`, "success");
+      } catch (err) {
+        console.error("[OLLY] 학급 생성 실패:", err);
+        showToast("학급 생성 중 오류가 발생했습니다: " + (err && err.message ? err.message : err), "danger");
+      } finally {
+        btnCreateClassroom.disabled = false;
+        btnCreateClassroom.textContent = "학급 만들기";
+      }
+    });
+  }
+
+  function setupClassroomModal() {
+    btnOpenClassroomModal.addEventListener("click", () => {
+      const classroomId = window.appStore.getClassroomId();
+      classroomLinkInput.value = `${window.location.origin}${window.location.pathname}?class=${classroomId}`;
+
+      const settings = window.appStore.getSystemSettings() || {};
+      classroomNameEditInput.value = settings.className || "";
+      classroomSizeEditInput.value = settings.totalStudents || 23;
+      classroomSizeEditInput.min = settings.totalStudents || 1;
+
+      classroomModal.classList.add("active");
+    });
+
+    btnCloseClassroomModal.addEventListener("click", () => {
+      classroomModal.classList.remove("active");
+    });
+
+    classroomModal.addEventListener("click", (e) => {
+      if (e.target === classroomModal) classroomModal.classList.remove("active");
+    });
+
+    btnCopyClassroomLink.addEventListener("click", () => {
+      classroomLinkInput.select();
+      navigator.clipboard.writeText(classroomLinkInput.value).then(() => {
+        showToast("학생용 접속 링크가 복사되었습니다.", "success");
+      }).catch(() => {
+        document.execCommand("copy");
+        showToast("링크가 복사되었습니다.", "success");
+      });
+    });
+
+    formClassroomEdit.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const className = classroomNameEditInput.value.trim();
+      const totalStudents = parseInt(classroomSizeEditInput.value, 10);
+      const currentTotal = (window.appStore.getSystemSettings() || {}).totalStudents || 0;
+
+      if (totalStudents < currentTotal) {
+        alert(`학생 수는 현재 인원(${currentTotal}명)보다 줄일 수 없습니다.`);
+        return;
+      }
+
+      const submitBtn = formClassroomEdit.querySelector("button[type='submit']");
+      submitBtn.disabled = true;
+      submitBtn.textContent = "저장 중...";
+
+      try {
+        await window.appStore.updateClassroomSettings({ className, totalStudents });
+        showTeacherDashboard(window.appStore.getCurrentSession());
+        renderPinTable();
+        classroomModal.classList.remove("active");
+        showToast("학급 설정이 저장되었습니다.", "success");
+      } catch (err) {
+        console.error("[OLLY] 학급 설정 저장 실패:", err);
+        showToast("저장 중 오류가 발생했습니다: " + (err && err.message ? err.message : err), "danger");
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.textContent = "학급 설정 저장";
+      }
+    });
+  }
+
   function showTeacherDashboard(session) {
     teacherEmailLabel.textContent = session.email;
     teacherLoginOverlay.style.display = "none";
+    classroomSetupOverlay.style.display = "none";
     teacherApp.style.display = "block";
+
+    const settings = window.appStore.getSystemSettings() || {};
+    sidebarClassTitle.textContent = settings.className ? `${settings.className} 학생` : "학급 학생";
 
     updateSelfIntroButtonState();
     renderStudentList();
@@ -203,13 +329,13 @@ document.addEventListener("DOMContentLoaded", () => {
 
   function renderPinTable() {
     const codes = window.appStore.getAllStudentCodes();
+    const total = (window.appStore.getSystemSettings() || {}).totalStudents || 23;
     pinTableBody.innerHTML = "";
-    for (let i = 1; i <= 23; i++) {
+    for (let i = 1; i <= total; i++) {
       const tr = document.createElement("tr");
       tr.style.borderBottom = "1px solid var(--color-border-light)";
       tr.innerHTML = `
         <td style="padding: 0.5rem; font-weight: 700; color: var(--color-primary);">${i}번</td>
-        <td style="padding: 0.5rem; color: var(--text-muted);">student${i}@classroom.local</td>
         <td style="padding: 0.5rem; font-weight: 700; font-family: monospace; font-size: 1.05rem; letter-spacing: 2px; color: var(--color-accent);">${codes[i] || '미등록'}</td>
       `;
       pinTableBody.appendChild(tr);
@@ -327,11 +453,12 @@ document.addEventListener("DOMContentLoaded", () => {
     return String(str || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   }
 
-  // 1~23번 사이드바 학생 목록 렌더링
+  // 사이드바 학생 목록 렌더링
   function renderStudentList() {
     studentListContainer.innerHTML = "";
+    const total = (window.appStore.getSystemSettings() || {}).totalStudents || 23;
 
-    for (let i = 1; i <= 23; i++) {
+    for (let i = 1; i <= total; i++) {
       const summary = window.appStore.getStudentSummary(i);
       const item = document.createElement("div");
       item.className = `student-list-item ${i === currentActiveStudent ? 'active' : ''}`;
@@ -375,8 +502,11 @@ document.addEventListener("DOMContentLoaded", () => {
   function loadStudentDetails(studentNum) {
     const summary = window.appStore.getStudentSummary(studentNum);
 
+    const className = (window.appStore.getSystemSettings() || {}).className || "";
     activeStudentBadge.textContent = `${studentNum}번 학생`;
-    activeStudentTitle.textContent = `6학년 1반 ${studentNum}번 학생의 사안 및 기록`;
+    activeStudentTitle.textContent = className
+      ? `${className} ${studentNum}번 학생의 사안 및 기록`
+      : `${studentNum}번 학생의 사안 및 기록`;
     activeStudentMeta.textContent = `성찰문 누적 ${summary.reflectionCount}건 · 자기평가 ${summary.hasSelfAssessment ? '제출 완료' : '미제출'}`;
 
     refCountBadge.textContent = summary.reflectionCount;
@@ -793,9 +923,17 @@ document.addEventListener("DOMContentLoaded", () => {
     const summary = window.appStore.getStudentSummary(currentActiveStudent);
     const draftResult = window.RecordDraftGenerator.generateDraft(summary);
 
-    // 모드 뱃지 및 알림 설정
-    draftModeBadge.textContent = draftResult.mode === "3:1" ? "3:1 구성 (장점 3 + 완곡 보완점 1)" : "4:0 구성 (장점 4 - 모범 학생)";
-    draftModeBadge.style.backgroundColor = draftResult.mode === "3:1" ? "var(--color-primary)" : "var(--color-success)";
+    if (draftResult.mode === "insufficient") {
+      showToast(draftResult.summary, "warning");
+      return;
+    }
+
+    // 모드 뱃지 및 알림 설정 (mode 예: "3:1", "2:0" 등 실제 제출된 장점 개수를 그대로 반영)
+    const [strengthCount, growthCount] = draftResult.mode.split(":");
+    draftModeBadge.textContent = growthCount === "1"
+      ? `${strengthCount}:1 구성 (장점 ${strengthCount} + 완곡 보완점 1)`
+      : `${strengthCount}:0 구성 (장점 ${strengthCount} - 보완점 없음)`;
+    draftModeBadge.style.backgroundColor = growthCount === "1" ? "var(--color-primary)" : "var(--color-success)";
     draftSummaryNotice.textContent = draftResult.summary;
 
     // 문장별 근거 매핑 목록 렌더링

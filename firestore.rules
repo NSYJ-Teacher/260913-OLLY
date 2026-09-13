@@ -1,63 +1,65 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    
-    // 헬퍼 함수: 교사 계정 확인
-    // - 커스텀 클레임(role: 'teacher') 또는 @school.kr 이메일 도메인 (향후 다른 교사 확장용)
-    // - 또는 구글 계정으로 로그인하는 담임교사 이메일 허용 목록 (1차 단일 학급 운영용)
-    function isTeacher() {
-      return request.auth != null && (
-        request.auth.token.role == 'teacher' ||
-        request.auth.token.email.matches('.*@school\\.kr$') ||
-        request.auth.token.email in ['csj5327@gmail.com']
-      );
+
+    // 헬퍼 함수: 이 학급(classroomId)의 담임교사인지 확인
+    // 학급 ID = 담임교사의 Firebase Auth UID (교사 1명당 학급 1개, 교사별 완전 분리)
+    function isClassroomTeacher(classroomId) {
+      return request.auth != null && request.auth.uid == classroomId;
     }
 
-    // 헬퍼 함수: 특정 출석번호 학생 본인 확인
-    // 학생 로그인 가상 이메일: student{studentId}@classroom.local
-    function isStudentOwner(studentId) {
-      return request.auth != null && 
-        request.auth.token.email == 'student' + string(studentId) + '@classroom.local';
+    // 헬퍼 함수: 이 학급의 특정 출석번호 학생 본인 확인
+    // 학생 로그인 가상 이메일: student{studentId}_{classroomId}@classroom.local
+    function isStudentOwner(classroomId, studentId) {
+      return request.auth != null &&
+        request.auth.token.email == ('student' + string(studentId) + '_' + classroomId + '@classroom.local');
     }
 
-    // 시스템 전역 설정 및 성찰문 문구 설정
-    // (settings/system, settings/question_overrides_conflict, settings/question_overrides_personal 등)
-    // 학생은 읽기만 가능, 교사는 읽기/수정 가능
-    match /settings/{settingId} {
-      allow read: if request.auth != null;
-      allow write: if isTeacher();
-    }
+    match /classrooms/{classroomId} {
 
-    // 학생 데이터 경로 (students/{studentId}/**)
-    // 학생은 본인의 하위 컬렉션(reflections, selfAssessments)만 생성 및 조회 가능
-    // 교사는 전체 학생 데이터 읽기/쓰기/피드백 작성 가능
-    match /students/{studentId} {
-      allow read, write: if isTeacher() || isStudentOwner(studentId);
-
-      match /reflections/{docId} {
-        allow read: if isTeacher() || isStudentOwner(studentId);
-        allow create: if isTeacher() || isStudentOwner(studentId);
-        allow update: if isTeacher() || (isStudentOwner(studentId) && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['teacherComment']));
-        allow delete: if isTeacher();
+      // 학급 설정(학급 이름, 학생 수, 자기평가 오픈 여부 등)
+      // - 학생 접속 화면(로그인 전)에서 학급명/학생 수를 표시해야 하므로 읽기는 공개
+      //   (개인정보가 아닌 학급 메타데이터만 포함되므로 공개해도 안전함)
+      // - 수정은 해당 학급 담임교사만 가능
+      match /settings/{settingId} {
+        allow read: if true;
+        allow write: if isClassroomTeacher(classroomId);
       }
 
-      match /selfAssessments/{docId} {
-        allow read: if isTeacher() || isStudentOwner(studentId);
-        allow write: if isTeacher() || isStudentOwner(studentId);
+      // 학생 데이터 경로 (classrooms/{classroomId}/students/{studentId}/**)
+      match /students/{studentId} {
+        // 학생 문서(PIN 등)는 교사만 읽기/쓰기 가능 (학생 본인도 PIN을 직접 변경할 수 없음)
+        allow read, write: if isClassroomTeacher(classroomId);
+
+        match /reflections/{docId} {
+          allow read: if isClassroomTeacher(classroomId) || isStudentOwner(classroomId, studentId);
+          // 학생 본인은 최초 제출(create)만 가능하고, 제출 후에는 교사만 수정/삭제 가능
+          // (콘솔 등으로 자신의 제출 내용을 직접 조작할 수 없도록 함)
+          allow create: if (isClassroomTeacher(classroomId) || isStudentOwner(classroomId, studentId))
+                         && request.resource.data.studentNum == int(studentId);
+          allow update, delete: if isClassroomTeacher(classroomId);
+        }
+
+        match /selfAssessments/{docId} {
+          allow read: if isClassroomTeacher(classroomId) || isStudentOwner(classroomId, studentId);
+          allow create: if (isClassroomTeacher(classroomId) || isStudentOwner(classroomId, studentId))
+                         && request.resource.data.studentNum == int(studentId);
+          allow update, delete: if isClassroomTeacher(classroomId);
+        }
       }
     }
 
-    // 교사 대시보드가 전체 학생의 성찰문/자기평가를 한 번에 조회할 때 사용하는
-    // collectionGroup() 쿼리 전용 규칙입니다. 위 students/{studentId} 하위의 중첩 규칙은
-    // "students/1/reflections"처럼 특정 부모 경로를 직접 조회할 때만 적용되고,
-    // collectionGroup() 쿼리(모든 학생의 reflections를 한 번에 조회)에는 적용되지 않으므로
-    // 최상위 와일드카드(path=**) 규칙을 별도로 선언해야 합니다.
+    // 교사 대시보드가 자신의 학급 전체 성찰문/자기평가를 한 번에 조회하는 collectionGroup() 쿼리 전용 규칙.
+    // 경로 구조: classrooms/{classroomId}/students/{studentId}/reflections/{docId}
+    // => path[0]='classrooms', path[1]=classroomId, path[2]='students', path[3]=studentId
+    // 위 nested match 규칙은 특정 부모 경로를 "직접" 조회할 때만 적용되고 collectionGroup() 쿼리에는
+    // 적용되지 않으므로, 최상위 와일드카드(path=**) 규칙을 별도로 선언해 본인 학급으로만 범위를 제한합니다.
     match /{path=**}/reflections/{docId} {
-      allow read: if isTeacher();
+      allow read: if request.auth != null && path.size() >= 2 && request.auth.uid == path[1];
     }
 
     match /{path=**}/selfAssessments/{docId} {
-      allow read: if isTeacher();
+      allow read: if request.auth != null && path.size() >= 2 && request.auth.uid == path[1];
     }
   }
 }
