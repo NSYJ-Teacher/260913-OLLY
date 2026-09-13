@@ -35,31 +35,33 @@ service cloud.firestore {
           allow read: if isClassroomTeacher(classroomId) || isStudentOwner(classroomId, studentId);
           // 학생 본인은 최초 제출(create)만 가능하고, 제출 후에는 교사만 수정/삭제 가능
           // (콘솔 등으로 자신의 제출 내용을 직접 조작할 수 없도록 함)
+          // classroomId 필드도 함께 검증해 collectionGroup 쿼리 규칙(아래)이 신뢰할 수 있게 함
           allow create: if (isClassroomTeacher(classroomId) || isStudentOwner(classroomId, studentId))
-                         && request.resource.data.studentNum == int(studentId);
+                         && request.resource.data.studentNum == int(studentId)
+                         && request.resource.data.classroomId == classroomId;
           allow update, delete: if isClassroomTeacher(classroomId);
         }
 
         match /selfAssessments/{docId} {
           allow read: if isClassroomTeacher(classroomId) || isStudentOwner(classroomId, studentId);
           allow create: if (isClassroomTeacher(classroomId) || isStudentOwner(classroomId, studentId))
-                         && request.resource.data.studentNum == int(studentId);
+                         && request.resource.data.studentNum == int(studentId)
+                         && request.resource.data.classroomId == classroomId;
           allow update, delete: if isClassroomTeacher(classroomId);
         }
       }
     }
 
     // 교사 대시보드가 자신의 학급 전체 성찰문/자기평가를 한 번에 조회하는 collectionGroup() 쿼리 전용 규칙.
-    // 경로 구조: classrooms/{classroomId}/students/{studentId}/reflections/{docId}
-    // => path[0]='classrooms', path[1]=classroomId, path[2]='students', path[3]=studentId
     // 위 nested match 규칙은 특정 부모 경로를 "직접" 조회할 때만 적용되고 collectionGroup() 쿼리에는
-    // 적용되지 않으므로, 최상위 와일드카드(path=**) 규칙을 별도로 선언해 본인 학급으로만 범위를 제한합니다.
+    // 적용되지 않으므로 최상위 와일드카드(path=**) 규칙이 별도로 필요합니다. 와일드카드 경로 세그먼트를
+    // 직접 파싱하는 대신(안정성이 낮음), 각 문서에 저장된 classroomId 필드로 본인 학급 여부를 확인합니다.
     match /{path=**}/reflections/{docId} {
-      allow read: if request.auth != null && path.size() >= 2 && request.auth.uid == path[1];
+      allow read: if request.auth != null && resource.data.classroomId == request.auth.uid;
     }
 
     match /{path=**}/selfAssessments/{docId} {
-      allow read: if request.auth != null && path.size() >= 2 && request.auth.uid == path[1];
+      allow read: if request.auth != null && resource.data.classroomId == request.auth.uid;
     }
   }
 }

@@ -291,8 +291,11 @@ class ClassroomStore {
     const classroomRef = this._classroomRef();
     const queries = [
       { name: "students", promise: classroomRef.collection("students").get() },
-      { name: "reflections(collectionGroup)", promise: db.collectionGroup("reflections").get() },
-      { name: "selfAssessments(collectionGroup)", promise: db.collectionGroup("selfAssessments").get() },
+      // Firestore는 collectionGroup 쿼리가 "이 학급 소속 문서만 반환할 수 있음"을 규칙과 함께
+      // 정적으로 증명할 수 있어야 허용합니다. where()로 classroomId를 명시적으로 제한해야
+      // 보안 규칙의 resource.data.classroomId 검사와 맞물려 permission-denied 없이 통과합니다.
+      { name: "reflections(collectionGroup)", promise: db.collectionGroup("reflections").where("classroomId", "==", this._classroomId).get() },
+      { name: "selfAssessments(collectionGroup)", promise: db.collectionGroup("selfAssessments").where("classroomId", "==", this._classroomId).get() },
       { name: "question_overrides_conflict", promise: classroomRef.collection("settings").doc("question_overrides_conflict").get() },
       { name: "question_overrides_personal", promise: classroomRef.collection("settings").doc("question_overrides_personal").get() }
     ];
@@ -466,6 +469,7 @@ class ClassroomStore {
     const newDoc = {
       id: docRef.id,
       studentNum: parseInt(studentNum, 10),
+      classroomId: this._classroomId,
       createdAt: new Date().toISOString(),
       teacherComment: "",
       ...data
@@ -535,6 +539,7 @@ class ClassroomStore {
     const newDoc = {
       id: docRef.id,
       studentNum: parseInt(studentNum, 10),
+      classroomId: this._classroomId,
       createdAt: new Date().toISOString(),
       ...data
     };
