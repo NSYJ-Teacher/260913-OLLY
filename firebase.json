@@ -1,6 +1,7 @@
 {
   "firestore": {
-    "rules": "firestore.rules"
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json"
   },
   "hosting": {
     "public": ".",
@@ -13,7 +14,8 @@
       "server.js",
       "test.js",
       "PRD.md",
-      "firestore.rules"
+      "firestore.rules",
+      "firestore.indexes.json"
     ],
     "headers": [
       {
