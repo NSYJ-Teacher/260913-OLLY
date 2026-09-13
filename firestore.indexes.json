@@ -1,5 +1,22 @@
 {
-  "indexes": [],
+  "indexes": [
+    {
+      "collectionGroup": "reflections",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        { "fieldPath": "classroomId", "order": "ASCENDING" },
+        { "fieldPath": "studentNum", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "selfAssessments",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        { "fieldPath": "classroomId", "order": "ASCENDING" },
+        { "fieldPath": "studentNum", "order": "ASCENDING" }
+      ]
+    }
+  ],
   "fieldOverrides": [
     {
       "collectionGroup": "reflections",
