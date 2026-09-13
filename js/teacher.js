@@ -110,7 +110,13 @@ document.addEventListener("DOMContentLoaded", () => {
       const submitBtn = formTeacherLogin.querySelector("button[type='submit']");
       if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = "로그인 처리 중..."; }
 
-      const res = await window.appStore.verifyTeacherLogin(teacherEmail.value.trim(), teacherPassword.value.trim());
+      let res;
+      try {
+        res = await window.appStore.verifyTeacherLogin(teacherEmail.value.trim(), teacherPassword.value.trim());
+      } catch (err) {
+        console.error("[OLLY] 로그인 처리 중 예외 발생:", err);
+        res = { success: false, message: "예상치 못한 오류가 발생했습니다: " + (err && err.message ? err.message : err) };
+      }
 
       if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = "관리자 대시보드 접속"; }
 

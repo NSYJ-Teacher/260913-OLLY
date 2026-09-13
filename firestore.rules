@@ -46,5 +46,18 @@ service cloud.firestore {
         allow write: if isTeacher() || isStudentOwner(studentId);
       }
     }
+
+    // 교사 대시보드가 전체 학생의 성찰문/자기평가를 한 번에 조회할 때 사용하는
+    // collectionGroup() 쿼리 전용 규칙입니다. 위 students/{studentId} 하위의 중첩 규칙은
+    // "students/1/reflections"처럼 특정 부모 경로를 직접 조회할 때만 적용되고,
+    // collectionGroup() 쿼리(모든 학생의 reflections를 한 번에 조회)에는 적용되지 않으므로
+    // 최상위 와일드카드(path=**) 규칙을 별도로 선언해야 합니다.
+    match /{path=**}/reflections/{docId} {
+      allow read: if isTeacher();
+    }
+
+    match /{path=**}/selfAssessments/{docId} {
+      allow read: if isTeacher();
+    }
   }
 }
