@@ -94,19 +94,26 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // 교사 세션 확인
   function checkTeacherSession() {
-    const session = window.appStore.getCurrentSession();
-    if (session && session.role === "teacher") {
-      showTeacherDashboard(session);
-    } else {
-      teacherLoginOverlay.style.display = "flex";
-      teacherApp.style.display = "none";
-    }
+    window.appStore.restoreSession().then((session) => {
+      if (session && session.role === "teacher") {
+        showTeacherDashboard(session);
+      } else {
+        teacherLoginOverlay.style.display = "flex";
+        teacherApp.style.display = "none";
+      }
+    });
   }
 
   function setupLoginHandler() {
-    formTeacherLogin.addEventListener("submit", (e) => {
+    formTeacherLogin.addEventListener("submit", async (e) => {
       e.preventDefault();
-      const res = window.appStore.verifyTeacherLogin(teacherEmail.value.trim(), teacherPassword.value.trim());
+      const submitBtn = formTeacherLogin.querySelector("button[type='submit']");
+      if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = "로그인 처리 중..."; }
+
+      const res = await window.appStore.verifyTeacherLogin(teacherEmail.value.trim(), teacherPassword.value.trim());
+
+      if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = "관리자 대시보드 접속"; }
+
       if (res.success) {
         showTeacherDashboard(res.session);
         showToast("선생님 환영합니다. 대시보드에 접속했습니다.", "success");
@@ -176,9 +183,12 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     });
 
-    btnRegenerateAllPins.addEventListener("click", () => {
+    btnRegenerateAllPins.addEventListener("click", async () => {
       if (confirm("정말로 전체 학생의 4자리 접속 코드를 새로 무작위 생성하시겠습니까?\n(기존 번호로 접속 중인 학생은 새 코드로 재접속해야 합니다)")) {
-        window.appStore.generateBulkStudentCodes();
+        showToast("코드를 재발급하는 중입니다. 잠시만 기다려 주세요...", "info");
+        btnRegenerateAllPins.disabled = true;
+        await window.appStore.generateBulkStudentCodes();
+        btnRegenerateAllPins.disabled = false;
         renderPinTable();
         showToast("전체 학생의 새 4자리 코드가 일괄 발급되었습니다.", "success");
       }

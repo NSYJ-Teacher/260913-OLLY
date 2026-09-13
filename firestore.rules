@@ -2,11 +2,14 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     
-    // 헬퍼 함수: 교사 계정 확인 (커스텀 클레임 또는 지정된 교사 이메일 도메인)
+    // 헬퍼 함수: 교사 계정 확인
+    // - 커스텀 클레임(role: 'teacher') 또는 @school.kr 이메일 도메인 (향후 다른 교사 확장용)
+    // - 또는 구글 계정으로 로그인하는 담임교사 이메일 허용 목록 (1차 단일 학급 운영용)
     function isTeacher() {
       return request.auth != null && (
-        request.auth.token.role == 'teacher' || 
-        request.auth.token.email.matches('.*@school\\.kr$')
+        request.auth.token.role == 'teacher' ||
+        request.auth.token.email.matches('.*@school\\.kr$') ||
+        request.auth.token.email in ['csj5327@gmail.com']
       );
     }
 
@@ -17,9 +20,10 @@ service cloud.firestore {
         request.auth.token.email == 'student' + string(studentId) + '@classroom.local';
     }
 
-    // 시스템 전역 설정 (settings/system)
+    // 시스템 전역 설정 및 성찰문 문구 설정
+    // (settings/system, settings/question_overrides_conflict, settings/question_overrides_personal 등)
     // 학생은 읽기만 가능, 교사는 읽기/수정 가능
-    match /settings/system {
+    match /settings/{settingId} {
       allow read: if request.auth != null;
       allow write: if isTeacher();
     }

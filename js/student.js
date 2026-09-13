@@ -293,8 +293,8 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  function handlePinSubmit() {
-    const result = window.appStore.verifyStudentLogin(selectedStudentNum, enteredPin);
+  async function handlePinSubmit() {
+    const result = await window.appStore.verifyStudentLogin(selectedStudentNum, enteredPin);
     if (result.success) {
       showToast(`${selectedStudentNum}번 학생으로 접속되었습니다.`, "success");
       enterPinStep.style.display = "none";
@@ -308,11 +308,12 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   function checkExistingSession() {
-    const session = window.appStore.getCurrentSession();
-    if (session && session.role === "student") {
-      authSection.style.display = "none";
-      showDashboard(session);
-    }
+    window.appStore.restoreSession().then((session) => {
+      if (session && session.role === "student") {
+        authSection.style.display = "none";
+        showDashboard(session);
+      }
+    });
   }
 
   function showDashboard(session) {
