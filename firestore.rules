@@ -1,0 +1,46 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // 헬퍼 함수: 교사 계정 확인 (커스텀 클레임 또는 지정된 교사 이메일 도메인)
+    function isTeacher() {
+      return request.auth != null && (
+        request.auth.token.role == 'teacher' || 
+        request.auth.token.email.matches('.*@school\\.kr$')
+      );
+    }
+
+    // 헬퍼 함수: 특정 출석번호 학생 본인 확인
+    // 학생 로그인 가상 이메일: student{studentId}@classroom.local
+    function isStudentOwner(studentId) {
+      return request.auth != null && 
+        request.auth.token.email == 'student' + string(studentId) + '@classroom.local';
+    }
+
+    // 시스템 전역 설정 (settings/system)
+    // 학생은 읽기만 가능, 교사는 읽기/수정 가능
+    match /settings/system {
+      allow read: if request.auth != null;
+      allow write: if isTeacher();
+    }
+
+    // 학생 데이터 경로 (students/{studentId}/**)
+    // 학생은 본인의 하위 컬렉션(reflections, selfAssessments)만 생성 및 조회 가능
+    // 교사는 전체 학생 데이터 읽기/쓰기/피드백 작성 가능
+    match /students/{studentId} {
+      allow read, write: if isTeacher() || isStudentOwner(studentId);
+
+      match /reflections/{docId} {
+        allow read: if isTeacher() || isStudentOwner(studentId);
+        allow create: if isTeacher() || isStudentOwner(studentId);
+        allow update: if isTeacher() || (isStudentOwner(studentId) && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['teacherComment']));
+        allow delete: if isTeacher();
+      }
+
+      match /selfAssessments/{docId} {
+        allow read: if isTeacher() || isStudentOwner(studentId);
+        allow write: if isTeacher() || isStudentOwner(studentId);
+      }
+    }
+  }
+}
